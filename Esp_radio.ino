@@ -212,7 +212,7 @@ boolean weblock = false;        // flag for lock main loop when web request star
 #define BUTTON2		  0	  //D3
 #define BUTTON3		  4	  //D2
 #endif
-// Maximal number of presets in EEPROM and size of an entry
+// Maximal number of presets in EEPROM and size of an entry, total space <= 4096 bytes
 #define EENUM 64
 #define EESIZ 64
 // Ringbuffer for smooth playing. 20000 bytes is 160 Kbits, about 1.5 seconds at 128kb bitrate.
