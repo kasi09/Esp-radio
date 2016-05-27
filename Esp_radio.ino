@@ -972,7 +972,7 @@ void timer100()
 	
 #if defined ( MYMOD )
   static int     countmy = 0 ;                    // Counter for activatie my process
-  #define EVERYMS 2                               // Execute my process every X * 100msec  
+  #define EVERYMS 5                               // Execute my process every X * 100msec  
   if ( ++countmy == EVERYMS  )                    // countmy passed?
   {
     timermy();
