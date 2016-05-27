@@ -106,13 +106,23 @@
 #define VERSION "27-may-2016"
 // TFT.  Define USETFT if required.
 #define USETFT
+#define MYMOD
+//#define ST7735
+#define WEMOS
+//
 #include <ESP8266WiFi.h>
 #include <ESPAsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <SPI.h>
 #if defined ( USETFT )
+#if !defined (MYMOD)
 #include <Adafruit_GFX.h>
+#endif
+#if !defined (ST7735)
 #include <TFT_ILI9163C.h>
+#else
+#include <TFT_ST7735.h>
+#endif
 #endif
 #include <Ticker.h>
 #include <stdio.h>
@@ -139,6 +149,7 @@ extern "C"
 #define asw2    2000
 #define asw3    2000
 //
+#if !defined (MYMOD)
 // Color definitions for the TFT screen (if used)
 #define	BLACK   0x0000
 #define	BLUE    0xF800
@@ -148,7 +159,20 @@ extern "C"
 #define MAGENTA RED | BLUE
 #define YELLOW  RED | GREEN  
 #define WHITE   0xFFFF
+#else
+boolean otalock = false;        // flag for lock main loop when ota started
+boolean weblock = false;        // flag for lock main loop when web request started
+// tft display width
+#if defined ( USETFT )
+#define TFT_WIDTH	  128
+#define BARH  8                 // bargraph height
+#define BARP  110               // bargraph position
+#define MAXVAL  RINGBFSIZ / 3   // value for map 
+#endif
+#endif
+
 // Digital I/O used
+#if !defined (WEMOS)
 // Pins for VS1053 module
 #define VS1053_CS     5
 #define VS1053_DCS    16
@@ -160,7 +184,35 @@ extern "C"
 #define BUTTON1 2
 #define BUTTON2 0
 #define BUTTON3 15
-// Maximal number of presets in EEPROM and size of an entry, total space <= 4096 bytes
+#else
+/*               
+                  ______________________________                
+                 |   L T L T L T L T L T L T    |
+                 |                              |
+              RST|                              |TX
+ ANALOG BUTTON A0|                              |RX
+    VS1053_DCS D0|16                       SCL_5|D1 OLED_SCL TFT_CS
+    VS1053_SCK D5|14_SCK                   SDA_4|D2 OLED_SDA TFT_DC
+   VS1053_MISO D6|12_MISO               10kPUP_0|D3
+   VS1053_MOSI D7|13_MOSI           LED_10kPUP_2|D4 VS1053_DREQ
+     VS1053_CS D8|15_SS_10kPDOWN                |GND
+              3V3|__                            |5V
+                    |                           |
+                    |___________________________|
+*/
+// Pins for VS1053 module
+#define VS1053_CS     15  //D8
+#define VS1053_DCS    16  //D0
+#define VS1053_DREQ   2   //D4
+// Pins CS and DC for TFT module (if used, see definition of "USETFT")
+#define TFT_CS        5   //D1
+#define TFT_DC        4   //D2
+// Control button (GPIO) for controlling station
+#define BUTTON1		  5	  //D1
+#define BUTTON2		  0	  //D3
+#define BUTTON3		  4	  //D2
+#endif
+// Maximal number of presets in EEPROM and size of an entry
 #define EENUM 64
 #define EESIZ 64
 // Ringbuffer for smooth playing. 20000 bytes is 160 Kbits, about 1.5 seconds at 128kb bitrate.
@@ -194,7 +246,11 @@ WiFiClient       mp3client ;                               // An instance of the
 AsyncWebServer   cmdserver ( 80 ) ;                        // Instance of embedded webserver
 String           cmd ;                                     // Command from remote
 #if defined ( USETFT )
+#if !defined (ST7735)
 TFT_ILI9163C     tft = TFT_ILI9163C ( TFT_CS, TFT_DC ) ;
+#else
+TFT_ST7735       tft = TFT_ST7735( TFT_CS, TFT_DC );
+#endif
 #endif
 Ticker           tckr ;                                    // For timing 10 sec
 uint32_t         totalcount = 0 ;                          // Counter mp3 data
@@ -212,7 +268,7 @@ char             sname[100] ;                              // Stationname
 int              port ;                                    // Port number for host
 char             newstation[EESIZ] ;                       // Station:port from remote
 int              delpreset = 0 ;                           // Preset to be deleted if nonzero
-uint8_t          reqvol = 80 ;                             // Requested volume
+uint8_t          reqvol = 100 ;                            // Requested volume
 uint8_t          savvolume ;                               // Saved volume
 uint8_t          rtone[4]    ;                             // Requested bass/treble settings
 bool             reqtone = false ;                         // new tone setting requested
@@ -233,7 +289,7 @@ uint16_t         analogrest ;                              // Rest value of anal
 // In EEPROM, every entry takes EESIZ bytes.
 const char*      hostlist[] = {
                      "Stations from remote control",  // Reserved entry
-                     "109.206.96.34:8100",            //  1 - NAXI LOVE RADIO, Belgrade, Serbia 128-kbps
+                     "stream3.polskieradio.pl:8904",  //  1 - PR3 Trójka                     
                      "us1.internet-radio.com:8180",   //  2 - Easy Hits Florida 128-kbps
                      "us2.internet-radio.com:8050",   //  3 - CLASSIC ROCK MIA WWW.SHERADIO.COM
                      "us1.internet-radio.com:15919",  //  4 - Magic Oldies Florida
@@ -247,6 +303,7 @@ const char*      hostlist[] = {
                      "85.17.122.39:8530",             // 12 - stylfm.gr laiko, 64-kbps
                      "94.23.66.155:8106",             // 13 - *ILR CHILL & GROOVE* 64-kbps
                      "205.164.62.22:7012",            // 14 - 1.FM - ABSOLUTE TRANCE (EURO) RADIO 64-kbps
+                     "109.206.96.34:8100",            // 15 - NAXI LOVE RADIO, Belgrade, Serbia 128-kbps                     
                      NULL } ;
 
 //******************************************************************************************
@@ -368,11 +425,18 @@ uint16_t VS1053::read_register ( uint8_t _reg ) const
   uint16_t result ;
   
   control_mode_on() ;
+#if !defined ( MYMOD )  
   SPI.write ( 3 ) ;                                // Read operation
   SPI.write ( _reg ) ;                             // Register to write (0..0xF)
   // Note: transfer16 does not seem to work
   result = ( SPI.transfer ( 0xFF ) << 8 ) |        // Read 16 bits data
            ( SPI.transfer ( 0xFF ) ) ;
+#else
+  SPI.write16 ((3 << 8) | (_reg));                 // Read operation | Register to write (0..0xF)
+  //result = (SPI.transfer16 ((3 << 8) | (_reg)));   // Read 16 bits data 
+  result = ( SPI.transfer ( 0xFF ) << 8 ) |        // Read 16 bits data
+           ( SPI.transfer ( 0xFF ) ) ;  
+#endif
   await_data_request() ;                           // Wait for DREQ to be HIGH again
   control_mode_off() ;
   return result ;
@@ -381,9 +445,13 @@ uint16_t VS1053::read_register ( uint8_t _reg ) const
 void VS1053::write_register ( uint8_t _reg, uint16_t _value ) const
 {
   control_mode_on( );
+#if !defined ( MYMOD )  
   SPI.write ( 2 ) ;                                // Write operation
   SPI.write ( _reg ) ;                             // Register to write (0..0xF)
   SPI.write16 ( _value ) ;                         // Send 16 bits data  
+#else
+  SPI.write32 ((2 << 24) | (_reg << 16) | (_value));  // Write operation | Register to write (0..0xF) | Send 16 bits data
+#endif
   await_data_request() ;
   control_mode_off() ;
 }
@@ -870,6 +938,21 @@ uint8_t anagetsw ( uint16_t v )
   return sw ;                                      // Return active switch
 }
 
+#if defined ( MYMOD )
+//******************************************************************************************
+//                                  MYTIMER                                                *
+//******************************************************************************************
+void timermy()
+{ 
+  #if defined ( USETFT )
+  uint16_t av = mp3client.available();
+  uint8_t curwidth = map(av, 0, MAXVAL, 0, TFT_WIDTH-2);
+  uint16_t color = tft.gradient((TFT_WIDTH-2)-curwidth);
+  tft.fillRect(0, BARP, TFT_WIDTH-1, BARH, DARK_GREY);
+  tft.fillRect(0+1, BARP+1, curwidth, BARH-2, color);
+  #endif
+}
+#endif
 
 //******************************************************************************************
 //                                  T I M E R 1 0 0                                        *
@@ -886,7 +969,17 @@ void timer100()
   uint16_t       v ;                              // Analog input value 0..1023
   static uint8_t aoldval = 0 ;                    // Previous value of analog input switch
   uint8_t        anewval ;                        // New value of analog input switch (0..3)
-  
+	
+#if defined ( MYMOD )
+  static int     countmy = 0 ;                    // Counter for activatie my process
+  #define EVERYMS 2                               // Execute my process every X * 100msec  
+  if ( ++countmy == EVERYMS  )                    // countmy passed?
+  {
+    timermy();
+    countmy = 0 ;                                 // Reset count  
+  }
+#endif
+ 
   if ( ++count10sec == 100  )                     // 10 seconds passed?
   {
     timer10sec() ;                                // Yes, do 10 second procedure
@@ -966,7 +1059,11 @@ void timer100()
 void displayinfo ( const char *str, int pos, uint16_t color )
 {
 #if defined ( USETFT )
+#if !defined (MYMOD)
   tft.fillRect ( 0, pos, 160, 40, BLACK ) ;   // Clear the space for new info
+#else
+  tft.fillRect ( 0, pos, TFT_WIDTH, 40, BLACK ) ;   // Clear the space for new info
+#endif
   tft.setTextColor ( color ) ;                // Set the requested color
   tft.setCursor ( 0, pos ) ;                  // Prepare to show the info
   tft.print ( str ) ;                         // Show the string
@@ -1301,6 +1398,11 @@ void connectwifi()
   pfs = dbgprint ( "IP = %d.%d.%d.%d",
                    WiFi.localIP()[0], WiFi.localIP()[1], WiFi.localIP()[2], WiFi.localIP()[3] ) ;
   #if defined ( USETFT )
+#if defined (MYMOD)
+  tft.fillRect ( 0, 119, TFT_WIDTH, 8, BLACK ) ;
+  tft.setTextColor ( LIGHT_GREY ) ;
+  tft.setCursor ( 0, 119 ) ;
+#endif
   tft.println ( pfs ) ;
   #endif
 }
@@ -1358,6 +1460,9 @@ void restoreVolumeAndPreset()
 void otastart()
 {
   dbgprint ( "OTA Started" ) ;
+#if defined ( MYMOD )
+  otalock = true;
+#endif
 }
 
 
@@ -1418,10 +1523,19 @@ void setup()
   mp3.begin() ;                                      // Initialize VS1053 player
   # if defined ( USETFT )
   tft.begin() ;                                      // Init TFT interface
+#if !defined (MYMOD)
   tft.fillRect ( 0, 0, 160, 128, BLACK ) ;           // Clear screen does not work when rotated
+#else
+  //tft.setFont(&mono_mid);
+  tft.fillRect ( 0, 0, TFT_WIDTH, 128, BLACK ) ;     // Clear screen does not work when rotated
+#endif  
   tft.setRotation ( 3 ) ;                            // Use landscape format
   tft.clearScreen() ;                                // Clear screen
+#if !defined (MYMOD)
   tft.setTextSize ( 1 ) ;                            // Small character font
+#else
+  tft.setTextScale( 1 ) ;                            // Small character font
+#endif  
   tft.setTextColor ( WHITE ) ;  
   tft.println ( "Starting" ) ;
   #else
@@ -1468,6 +1582,9 @@ void setup()
 //******************************************************************************************
 void loop()
 {
+#if defined ( MYMOD )
+  if ((!otalock) && (!weblock)) {
+#endif
   // Try to keep the ringbuffer filled up by adding as much bytes as possible 
   while ( ringspace() && mp3client.available() )
   {
@@ -1505,6 +1622,9 @@ void loop()
     reqtone = false ;
     mp3.setTone ( rtone ) ;                       // Set SCI_BASS to requested value
   }
+#if defined ( MYMOD )
+  }
+#endif  
   ArduinoOTA.handle() ;                           // Check for OTA
 }
 
@@ -1777,8 +1897,14 @@ void handleCmd ( AsyncWebServerRequest *request )
   numargs = request->params() ;                       // Get number of arguments
   if ( numargs == 0 )                                 // Any arguments
   {
+#if defined ( MYMOD )
+    weblock = true;
+#endif
     request->send ( SPIFFS, "/index.html",            // No parameters, send the startpage
                     "text/html" ) ;
+#if defined ( MYMOD )
+    weblock = false;
+#endif
     return ;
   }
   strcpy ( reply, "Command(s) accepted" ) ;           // Default reply
