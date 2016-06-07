@@ -107,7 +107,7 @@
 // TFT.  Define USETFT if required.
 #define USETFT
 #define MYMOD
-//#define ST7735
+#define ST7735
 #define WEMOS
 //
 #include <ESP8266WiFi.h>
@@ -141,6 +141,7 @@ extern "C"
 // in the web interface. See schematics in the documentation.
 // Switches are programmed as "Goto station 1", "Next station" and "Previous station" respectively.
 // Set these values to 2000 if not used or tie analog input to ground.
+#if !defined (MYMOD)
 #define NUMANA  3
 //#define asw1    252
 //#define asw2    334
@@ -148,6 +149,14 @@ extern "C"
 #define asw1    2000
 #define asw2    2000
 #define asw3    2000
+#else
+#define NUMANA  5
+#define asw1    713   //jump to preset 1
+#define asw2    155   //ch up
+#define asw3    323   //ch down
+#define asw4    492   //volume up
+#define asw5    23    //volume down
+#endif
 //
 #if !defined (MYMOD)
 // Color definitions for the TFT screen (if used)
@@ -164,9 +173,15 @@ boolean otalock = false;        // flag for lock main loop when ota started
 boolean weblock = false;        // flag for lock main loop when web request started
 // tft display width
 #if defined ( USETFT )
-#define TFT_WIDTH	  128
+  #if defined (ST7735)
+    #define TFT_WIDTH	  160
+  #else
+    #define TFT_WIDTH   128
+  #endif
 #define BARH  8                 // bargraph height
-#define BARP  110               // bargraph position
+#define BARPV  100              // bargraph volume position
+#define BARPB  110              // bargraph buffer position
+#define BARPO  72               // bargraph otaupd position
 #define MAXVAL  RINGBFSIZ / 3   // value for map 
 #endif
 #endif
@@ -279,7 +294,11 @@ uint8_t*         ringbuf ;                                 // Ringbuffer for VS1
 uint16_t         rbwindex = 0 ;                            // Fill pointer in ringbuffer
 uint16_t         rbrindex = RINGBFSIZ - 1 ;                // Emptypointer in ringbuffer
 uint16_t         rcount = 0 ;                              // Number of bytes in ringbuffer
+#if !defined ( MYMOD )
 uint16_t         analogsw[NUMANA] = { asw1, asw2, asw3 } ; // 3 levels of analog input
+#else
+uint16_t         analogsw[NUMANA] = { asw1, asw2, asw3, asw4, asw5 } ; // 5 levels of analog input
+#endif
 uint16_t         analogrest ;                              // Rest value of analog input
 
 //
@@ -918,6 +937,7 @@ void timer10sec()
 //******************************************************************************************
 uint8_t anagetsw ( uint16_t v )
 {
+#if !defined ( MYMOD )
   int      i ;                                    // Loop control
   int      oldmindist = 1000 ;                    // Detection least difference
   int      newdist ;                              // New found difference
@@ -936,6 +956,26 @@ uint8_t anagetsw ( uint16_t v )
     }
   }
   return sw ;                                      // Return active switch
+#else
+  int      i ;                                    // Loop control
+  int      oldmindist = 10 ;                      // Detection least difference
+  int      newdist ;                              // New found difference
+  uint8_t  sw = 0 ;                               // Number of switch detected (0 or 1..3)   
+
+  if ( v != analogrest )                          // Inactive level?
+  {
+    for ( i = 0 ; i < NUMANA ; i++ )
+    {
+      newdist = abs ( analogsw[i] - v ) ;          // Compute difference
+      if ( newdist < oldmindist )                  // New least difference?
+      {
+        oldmindist = newdist ;                     // Yes, remember
+        sw = i + 1 ;                               // Remember switch 
+      }
+    }
+  }
+  return sw ;                                      // Return active switch
+#endif
 }
 
 #if defined ( MYMOD )
@@ -945,11 +985,31 @@ uint8_t anagetsw ( uint16_t v )
 void timermy()
 { 
   #if defined ( USETFT )
-  uint16_t av = mp3client.available();
-  uint8_t curwidth = map(av, 0, MAXVAL, 0, TFT_WIDTH-2);
-  uint16_t color = tft.gradient((TFT_WIDTH-2)-curwidth);
-  tft.fillRect(0, BARP, TFT_WIDTH-1, BARH, DARK_GREY);
-  tft.fillRect(0+1, BARP+1, curwidth, BARH-2, color);
+  if ((!otalock) && (!weblock)) {
+    static bool firstset = true;
+    uint8_t curwidth = 0;
+    uint16_t color = 0;
+
+    //backgroud for volume and buffer 
+    if (firstset) {
+      tft.fillRect(0, BARPV, TFT_WIDTH-1, BARH, DARK_GREY);
+      tft.fillRect(0, BARPB, TFT_WIDTH-1, BARH, DARK_GREY);
+      firstset = false;
+    }
+    
+    //volume
+    curwidth = map(reqvol, 0, 100, 0, TFT_WIDTH-2);
+    color = tft.gradient((TFT_WIDTH-2)-curwidth);
+    tft.fillRect(0+1, BARPV+1, curwidth, BARH-2, color);
+    tft.fillRect(curwidth+1, BARPV, TFT_WIDTH-curwidth-2, BARH, DARK_GREY);
+
+    //buffer
+    uint16_t av = mp3client.available();
+    curwidth = map(av, 0, MAXVAL, 0, TFT_WIDTH-2);
+    color = tft.gradient((TFT_WIDTH-2)-curwidth);
+    tft.fillRect(0+1, BARPB+1, curwidth, BARH-2, color);
+    tft.fillRect(curwidth+1, BARPB, TFT_WIDTH-curwidth-2, BARH, DARK_GREY);
+  }
   #endif
 }
 #endif
@@ -972,7 +1032,7 @@ void timer100()
 	
 #if defined ( MYMOD )
   static int     countmy = 0 ;                    // Counter for activatie my process
-  #define EVERYMS 5                               // Execute my process every X * 100msec  
+  #define EVERYMS 2                               // Execute my process every X * 100msec  
   if ( ++countmy == EVERYMS  )                    // countmy passed?
   {
     timermy();
@@ -1046,6 +1106,24 @@ void timer100()
         {
           newpreset = currentpreset - 1 ;         // Yes, goto previous preset
         }
+#if defined ( MYMOD )
+        else if ( anewval == 4 )                  // Button 4?
+        {
+          reqvol = reqvol + 2 ;                   // Yes, volume up
+          if ( reqvol > 100 )
+          {
+            reqvol = 100 ;                        // Limit to normal values
+          }
+        }
+        else if ( anewval == 5 )                  // Button 5?
+        {
+          reqvol = reqvol - 2 ;                   // Yes, volume down
+          if (( reqvol < 0 ) || ( reqvol > 100 ))
+          {
+            reqvol = 0 ;                          // Limit to normal values
+          }
+        }
+#endif
       }
     }
   }
@@ -1459,12 +1537,62 @@ void restoreVolumeAndPreset()
 //******************************************************************************************
 void otastart()
 {
-  dbgprint ( "OTA Started" ) ;
 #if defined ( MYMOD )
   otalock = true;
+#endif  
+  dbgprint ( "OTA Started" ) ;
+#if defined ( USETFT )
+  tft.fillScreen(RED);
+  tft.setTextScale( 2 ) ;
+  tft.setTextColor ( YELLOW ) ;
+  tft.setCursor(CENTER, CENTER);
+  tft.print ( "OTA STARTED" ) ;
 #endif
 }
 
+#if defined ( MYMOD ) && defined ( USETFT )
+void otaprogress(unsigned int progress, unsigned int total)
+{
+  static bool firststep = true;
+  uint8_t proc = (progress / (total / 100));
+  dbgprint ( "Progress: %u%%", proc );
+  
+  uint8_t curwidth = map(proc, 0, 100, 0, TFT_WIDTH-4);
+  if (firststep) {
+    tft.fillRect(0, BARPO, TFT_WIDTH-1, BARH*2, LIGHT_GREY);
+    firststep = false;
+  }
+  tft.fillRect(0+2, BARPO+2, curwidth, BARH*2-4, YELLOW); 
+}
+
+void otaend() {
+  dbgprint ( "REBOOTING" ) ;
+  tft.fillScreen(BLACK);
+  tft.setTextScale( 2 ) ;
+  tft.setTextColor ( YELLOW ) ;
+  tft.setCursor(CENTER, CENTER);
+  tft.print ( "reBOOTING" ) ;
+  //otalock = false;
+}
+
+void otaerror(ota_error_t error) {
+  dbgprint ( "Error[%u]: ", error );
+  if (error == OTA_AUTH_ERROR) dbgprint ("Auth Failed");
+  else if (error == OTA_BEGIN_ERROR) dbgprint ("Begin Failed");
+  else if (error == OTA_CONNECT_ERROR) dbgprint ("Connect Failed");
+  else if (error == OTA_RECEIVE_ERROR) dbgprint ("Receive Failed");
+  else if (error == OTA_END_ERROR) dbgprint ("End Failed");
+
+  tft.fillScreen(YELLOW);
+  tft.setTextScale( 2 ) ;
+  tft.setTextColor ( RED ) ;
+  tft.setCursor(CENTER, CENTER);
+  tft.print ( "OTA ERROR" ) ;
+  delay(2000);
+  tft.fillScreen(BLACK);
+  otalock = false;
+}
+#endif
 
 //******************************************************************************************
 //                                   S E T U P                                             *
@@ -1532,7 +1660,8 @@ void setup()
   tft.setRotation ( 3 ) ;                            // Use landscape format
   tft.clearScreen() ;                                // Clear screen
 #if !defined (MYMOD)
-  tft.setTextSize ( 1 ) ;                            // Small character font
+  //tft.setTextSize ( 1 ) ;                            // Small character font
+  tft.setTextScale( 1 ) ;                            // Small character font
 #else
   tft.setTextScale( 1 ) ;                            // Small character font
 #endif  
@@ -1545,7 +1674,11 @@ void setup()
   delay(10);
   streamtitle[0] = '\0' ;                            // No title yet
   newstation[0] = '\0' ;                             // No new station yet
+#if !defined ( MYMOD )  
   analogrest = ( analogRead ( A0 ) + asw1 ) / 2  ;   // Assumed inactive analog input
+#else
+  analogrest = ( analogRead ( A0 ) ) ;               // Assumed inactive analog input
+#endif
   tckr.attach ( 0.100, timer100 ) ;                  // Every 100 msec
   listNetworks() ;                                   // Search for strongest WiFi network
   if ( numpwf == 1 )                                 // If there's only one pw-file...
@@ -1563,6 +1696,11 @@ void setup()
   connecttohost() ;                                  // Connect to the selected host
   ArduinoOTA.setHostname ( "ESP-radio" ) ;           // Set the hostname
   ArduinoOTA.onStart ( otastart ) ;
+#if defined ( MYMOD ) && defined ( USETFT )
+  ArduinoOTA.onProgress ( otaprogress ) ;
+  ArduinoOTA.onEnd ( otaend ) ;
+  ArduinoOTA.onError ( otaerror ) ;  
+#endif
   ArduinoOTA.begin() ;                               // Allow update over the air
   analogrest = ( analogRead ( A0 ) + asw1 ) / 2  ;   // Assumed inactive analog input
 }
