@@ -117,6 +117,9 @@
 #if defined ( USETFT )
 #if !defined (MYMOD)
 #include <Adafruit_GFX.h>
+#else
+#include <TimeLib.h>
+#include <NtpClientLib.h>
 #endif
 #if !defined (ST7735)
 #include <TFT_ILI9163C.h>
@@ -152,10 +155,10 @@ extern "C"
 #else
 #define NUMANA  5
 #define asw1    713   //jump to preset 1
-#define asw2    155   //ch up
-#define asw3    323   //ch down
-#define asw4    492   //volume up
-#define asw5    23    //volume down
+#define asw2    160   //ch up
+#define asw3    329   //ch down
+#define asw4    497   //volume up
+#define asw5    32    //volume down
 #endif
 //
 #if !defined (MYMOD)
@@ -298,6 +301,7 @@ uint16_t         rcount = 0 ;                              // Number of bytes in
 uint16_t         analogsw[NUMANA] = { asw1, asw2, asw3 } ; // 3 levels of analog input
 #else
 uint16_t         analogsw[NUMANA] = { asw1, asw2, asw3, asw4, asw5 } ; // 5 levels of analog input
+ntpClient        *ntp;
 #endif
 uint16_t         analogrest ;                              // Rest value of analog input
 
@@ -452,9 +456,7 @@ uint16_t VS1053::read_register ( uint8_t _reg ) const
            ( SPI.transfer ( 0xFF ) ) ;
 #else
   SPI.write16 ((3 << 8) | (_reg));                 // Read operation | Register to write (0..0xF)
-  //result = (SPI.transfer16 ((3 << 8) | (_reg)));   // Read 16 bits data 
-  result = ( SPI.transfer ( 0xFF ) << 8 ) |        // Read 16 bits data
-           ( SPI.transfer ( 0xFF ) ) ;  
+  result = (SPI.transfer16 ( 0xFFFF ));            // Read 16 bits data  
 #endif
   await_data_request() ;                           // Wait for DREQ to be HIGH again
   control_mode_off() ;
@@ -958,7 +960,7 @@ uint8_t anagetsw ( uint16_t v )
   return sw ;                                      // Return active switch
 #else
   int      i ;                                    // Loop control
-  int      oldmindist = 10 ;                      // Detection least difference
+  int      oldmindist = 25 ;                      // Detection least difference
   int      newdist ;                              // New found difference
   uint8_t  sw = 0 ;                               // Number of switch detected (0 or 1..3)   
 
@@ -1031,6 +1033,7 @@ void timer100()
   uint8_t        anewval ;                        // New value of analog input switch (0..3)
 	
 #if defined ( MYMOD )
+  // mytimer
   static int     countmy = 0 ;                    // Counter for activatie my process
   #define EVERYMS 2                               // Execute my process every X * 100msec  
   if ( ++countmy == EVERYMS  )                    // countmy passed?
@@ -1038,6 +1041,19 @@ void timer100()
     timermy();
     countmy = 0 ;                                 // Reset count  
   }
+
+  // timer onesec
+  static int     onesec = 10 ;                    // Counter for activatie 1 sec
+  if (( --onesec == 0  ) && (!otalock))           // countmy passed?
+  {
+    tft.fillRect(0, 0, TFT_WIDTH/2, 16, BLACK);
+    tft.setTextScale( 2 ) ;
+    tft.setTextColor ( RED ) ;
+    tft.setCursor(0, 0);
+    tft.print ( ntp->getTimeStr() ) ;
+    tft.setTextScale( 1 ) ;    
+    onesec = 10 ;                                 // Reset count  
+  }  
 #endif
  
   if ( ++count10sec == 100  )                     // 10 seconds passed?
@@ -1217,7 +1233,9 @@ void connecttohost()
     mp3client.flush() ;
     mp3client.stop() ;
   }
+#if !defined ( MYMOD )  
   displayinfo ( "   ** Internet radio **", 0, WHITE ) ;
+#endif
   if ( newstation[0] )                              // New station specified by host?
   {
     if ( strstr ( newstation, ":" ) )               // Correct format?
@@ -1660,8 +1678,7 @@ void setup()
   tft.setRotation ( 3 ) ;                            // Use landscape format
   tft.clearScreen() ;                                // Clear screen
 #if !defined (MYMOD)
-  //tft.setTextSize ( 1 ) ;                            // Small character font
-  tft.setTextScale( 1 ) ;                            // Small character font
+  tft.setTextSize ( 1 ) ;                            // Small character font
 #else
   tft.setTextScale( 1 ) ;                            // Small character font
 #endif  
@@ -1688,6 +1705,11 @@ void setup()
   }
   dbgprint ( "Selected network: %-25s", ssid.c_str() ) ;
   connectwifi() ;                                    // Connect to WiFi network
+#if defined ( MYMOD )
+  dbgprint ( "Update time via NTP" ) ;
+  ntp = ntpClient::getInstance("pl.pool.ntp.org", 2); // Poland
+  ntp->begin();
+#endif  
   dbgprint ( "Start server for commands" ) ;
   cmdserver.on ( "/", handleCmd ) ;                  // Handle startpage
   cmdserver.onNotFound ( handleFS ) ;                // Handle file from FS
